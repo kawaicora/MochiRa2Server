@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  mochi-online-server:
+    build: .
+    container_name: mochi-online-server
+    restart: unless-stopped
+    ports:
+      - "36211:36211"
+    environment:
+      - TZ=Asia/Shanghai
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    networks:
+      - mochi-network
+
+networks:
+  mochi-network:
+    driver: bridge
