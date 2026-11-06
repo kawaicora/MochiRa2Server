@@ -7,8 +7,8 @@ from enum import IntEnum
 PROTOCOL_VERSION = 1
 PACKET_MAGIC = 0x4D43  # "MC"
 
-# Header: Magic(2) + Version(1) + Type(1) + Length(2) + Reserved(2) = 8 bytes
-HEADER_FORMAT = '<HBBHH'
+# Header: Magic(2) + Version(1) + Type(1) + Length(2) + fromPlayerId(4) + toPlayerId(4) + payloadLen(2) = 16 bytes
+HEADER_FORMAT = '<HBBHIIH'
 HEADER_SIZE = struct.calcsize(HEADER_FORMAT)
 
 
@@ -25,17 +25,17 @@ class PacketType(IntEnum):
     Error = 0xFF
 
 
-def pack_packet(packet_type: PacketType, data: bytes = b'') -> bytes:
+def pack_packet(packet_type: PacketType, data: bytes = b'', from_player_id: int = 0, to_player_id: int = 0, payload_len: int = 0) -> bytes:
     header = struct.pack(HEADER_FORMAT, PACKET_MAGIC, PROTOCOL_VERSION,
-                         packet_type.value, len(data), 0)
+                         packet_type.value, len(data), from_player_id, to_player_id, payload_len)
     return header + data
 
 
 def unpack_header(data: bytes):
-    magic, version, ptype, length, reserved = struct.unpack(HEADER_FORMAT, data)
+    magic, version, ptype, length, from_player_id, to_player_id, payload_len = struct.unpack(HEADER_FORMAT, data)
     if magic != PACKET_MAGIC:
         raise ValueError(f"Invalid magic: {magic:04X}")
-    return PacketType(ptype), length, version
+    return PacketType(ptype), length, version, from_player_id, to_player_id, payload_len
 
 
 def pack_hello(game_version: int, game_udp_port: int, player_name: str) -> bytes:
@@ -56,13 +56,11 @@ def pack_welcome(player_id: int, max_players: int, current_players: int) -> byte
 
 
 def pack_udp_data(inner_type: int, from_player_id: int, to_player_id: int, payload: bytes) -> bytes:
-    data = struct.pack('<BIIH', inner_type, from_player_id, to_player_id, len(payload)) + payload
-    return pack_packet(PacketType.UdpData, data)
+    return pack_packet(PacketType.UdpData, payload, from_player_id=from_player_id, to_player_id=to_player_id, payload_len=len(payload))
 
 
-def unpack_udp_data(data: bytes):
-    inner_type, from_player_id, to_player_id, length = struct.unpack('<BIIH', data[:11])
-    return inner_type, from_player_id, to_player_id, data[11:11+length]
+def unpack_udp_data(data: bytes, from_player_id: int, to_player_id: int, payload_len: int) -> tuple:
+    return from_player_id, to_player_id, data[:payload_len]
 
 
 def pack_heartbeat_ack() -> bytes:

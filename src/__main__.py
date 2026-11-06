@@ -4,9 +4,10 @@ MochiOnline 中心服务器 - 主程序
 import asyncio
 import logging
 import os
+import socket
 
 from .protocol import (
-    PacketType, unpack_header, hexdump,
+    PacketType, unpack_header, hexdump, HEADER_SIZE,
     unpack_hello, pack_welcome, unpack_udp_data,
     pack_heartbeat_ack, pack_player_join, pack_player_leave, pack_error,
     pack_udp_data,
@@ -75,6 +76,16 @@ class Server:
         addr = writer.get_extra_info('peername')
         log.info(f"New connection: {addr}")
 
+        # Disable Nagle: clients send small join/ack packets then a large
+        # options packet immediately after. Nagle would hold the large packet
+        # until the small one is ACKed, delaying options by 40-200ms.
+        try:
+            sock = writer.get_extra_info('socket')
+            if sock is not None:
+                sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+        except OSError as e:
+            log.warning(f"setsockopt TCP_NODELAY failed: {e}")
+
         conn = await self.table.add(reader, writer)
         if not conn:
             writer.write(pack_error("Server full"))
@@ -84,8 +95,8 @@ class Server:
 
         try:
             while self.running:
-                hdr = await reader.readexactly(8)
-                ptype, length, _ = unpack_header(hdr)
+                hdr = await reader.readexactly(HEADER_SIZE)
+                ptype, length, _, from_id, to_id, payload_len = unpack_header(hdr)
                 body = await reader.readexactly(length) if length > 0 else b''
 
                 full_pkt = hdr + body
@@ -110,18 +121,18 @@ class Server:
                     await self.table.broadcast(join_notice, exclude_pid=conn.player_id)
 
                 elif ptype == PacketType.UdpData:
-                    inner_type, from_id, to_id, payload = unpack_udp_data(body)
+                    from_id, to_id, payload = unpack_udp_data(body, from_id, to_id, payload_len)
                     conn.update_heartbeat()
 
                     if to_id == 0xFFFFFFFF:
-                        pkt = pack_udp_data(inner_type, from_id, to_id, payload)
+                        pkt = pack_udp_data(0, from_id, to_id, payload)
                         log.debug(f"[SEND] Broadcast UdpData ({len(payload)} bytes) from {from_id}")
                         debug_dump(pkt)
                         await self.table.broadcast(pkt, exclude_pid=from_id)
                     else:
                         target = self.table.get(to_id)
                         if target and target.state == ConnectionState.CONNECTED:
-                            pkt = pack_udp_data(inner_type, from_id, to_id, payload)
+                            pkt = pack_udp_data(0, from_id, to_id, payload)
                             target.writer.write(pkt)
                             await target.writer.drain()
                             log.debug(f"[SEND] UdpData ({len(payload)} bytes) {from_id} -> {to_id}")
