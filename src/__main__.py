@@ -3,6 +3,7 @@ MochiOnline 中心服务器 - 主程序
 """
 import asyncio
 import logging
+import os
 
 from .protocol import (
     PacketType, unpack_header, hexdump,
@@ -18,12 +19,22 @@ MAX_PLAYERS = 8
 HEARTBEAT_INTERVAL = 3.0
 HEARTBEAT_TIMEOUT = 10.0
 
+# DEBUG 开关：设置环境变量 MOCHI_DEBUG=1 打印数据包 hexdump
+DEBUG = os.environ.get("MOCHI_DEBUG", "0") == "1"
+
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.DEBUG if DEBUG else logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 log = logging.getLogger("MochiOnline")
+
+
+def debug_dump(data: bytes):
+    """仅在 DEBUG 模式下打印 hexdump"""
+    if DEBUG:
+        for line in hexdump(data).split('\n'):
+            log.debug(line)
 
 
 class Server:
@@ -79,9 +90,8 @@ class Server:
 
                 full_pkt = hdr + body
                 type_name = PacketType(ptype).name
-                log.info(f"[RECV] {type_name} ({len(body)} bytes) from {addr}")
-                for line in hexdump(full_pkt).split('\n'):
-                    log.info(line)
+                log.debug(f"[RECV] {type_name} ({len(body)} bytes) from {addr}")
+                debug_dump(full_pkt)
 
                 if ptype == PacketType.Hello:
                     game_ver, udp_port, name = unpack_hello(body)
@@ -93,9 +103,8 @@ class Server:
                     welcome = pack_welcome(conn.player_id, MAX_PLAYERS, self.table.count())
                     writer.write(welcome)
                     await writer.drain()
-                    log.info(f"[SEND] Welcome to {addr}")
-                    for line in hexdump(welcome).split('\n'):
-                        log.info(line)
+                    log.debug(f"[SEND] Welcome to {addr}")
+                    debug_dump(welcome)
 
                     join_notice = pack_player_join(conn.player_id, name)
                     await self.table.broadcast(join_notice, exclude_pid=conn.player_id)
@@ -106,9 +115,8 @@ class Server:
 
                     if to_id == 0xFFFFFFFF:
                         pkt = pack_udp_data(inner_type, from_id, to_id, payload)
-                        log.info(f"[SEND] Broadcast UdpData ({len(payload)} bytes) from {from_id}")
-                        for line in hexdump(pkt).split('\n'):
-                            log.info(line)
+                        log.debug(f"[SEND] Broadcast UdpData ({len(payload)} bytes) from {from_id}")
+                        debug_dump(pkt)
                         await self.table.broadcast(pkt, exclude_pid=from_id)
                     else:
                         target = self.table.get(to_id)
@@ -116,9 +124,8 @@ class Server:
                             pkt = pack_udp_data(inner_type, from_id, to_id, payload)
                             target.writer.write(pkt)
                             await target.writer.drain()
-                            log.info(f"[SEND] UdpData ({len(payload)} bytes) {from_id} -> {to_id}")
-                            for line in hexdump(pkt).split('\n'):
-                                log.info(line)
+                            log.debug(f"[SEND] UdpData ({len(payload)} bytes) {from_id} -> {to_id}")
+                            debug_dump(pkt)
                         else:
                             log.warning(f"Target player {to_id} not online")
 
